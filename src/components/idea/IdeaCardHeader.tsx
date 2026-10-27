@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Download, FileText, Share2, Bookmark, BookmarkCheck, Loader2, Zap } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Idea } from '../../types';
 
 interface IdeaCardHeaderProps {
@@ -22,6 +23,7 @@ export const IdeaCardHeader: React.FC<IdeaCardHeaderProps> = ({
   user,
 }) => {
   const heatBadge = idea.heatBadge?.includes('�') ? 'Early Bird' : idea.heatBadge || 'Early Bird';
+  const [exportOpen, setExportOpen] = useState(false);
 
   return (
     <div className="flex justify-between items-start gap-4">
@@ -46,41 +48,55 @@ export const IdeaCardHeader: React.FC<IdeaCardHeaderProps> = ({
       </div>
       <div className="flex items-center gap-2">
         {onExport && (
-          <div className="relative group/export">
+          <div className="relative">
             <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setExportOpen((o) => !o);
+              }}
               className="p-2 text-zinc-500 hover:text-emerald-500 transition-colors bg-zinc-800/50 rounded-full"
               title="Export Pitch Deck"
             >
               <Download className="w-5 h-5" />
             </button>
-            <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl opacity-0 invisible group-hover/export:opacity-100 group-hover/export:visible transition-all z-50 p-1">
-              <button
-                onClick={() => onExport('pdf')}
-                className="w-full text-left px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800 rounded-lg flex items-center gap-2"
-              >
-                <FileText className="w-4 h-4" /> PDF Pitch Deck
-              </button>
-              {!isFree ? (
-                <>
+            <AnimatePresence>
+              {exportOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute right-0 top-full mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 p-1"
+                >
                   <button
-                    onClick={() => onExport('notion')}
+                    onClick={() => onExport('pdf')}
                     className="w-full text-left px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800 rounded-lg flex items-center gap-2"
                   >
-                    <Share2 className="w-4 h-4" /> Notion Template
+                    <FileText className="w-4 h-4" /> PDF Pitch Deck
                   </button>
-                  <button
-                    onClick={() => onExport('gdocs')}
-                    className="w-full text-left px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800 rounded-lg flex items-center gap-2"
-                  >
-                    <FileText className="w-4 h-4" /> Google Docs
-                  </button>
-                </>
-              ) : (
-                <div className="px-3 py-2 border-t border-zinc-800 mt-1">
-                  <p className="text-xs text-zinc-500">Upgrade for Notion/GDocs</p>
-                </div>
+                  {!isFree ? (
+                    <>
+                      <button
+                        onClick={() => onExport('notion')}
+                        className="w-full text-left px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800 rounded-lg flex items-center gap-2"
+                      >
+                        <Share2 className="w-4 h-4" /> Notion Template
+                      </button>
+                      <button
+                        onClick={() => onExport('gdocs')}
+                        className="w-full text-left px-3 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800 rounded-lg flex items-center gap-2"
+                      >
+                        <FileText className="w-4 h-4" /> Google Docs
+                      </button>
+                    </>
+                  ) : (
+                    <div className="px-3 py-2 border-t border-zinc-800 mt-1">
+                      <p className="text-xs text-zinc-500">Upgrade for Notion/GDocs</p>
+                    </div>
+                  )}
+                </motion.div>
               )}
-            </div>
+            </AnimatePresence>
           </div>
         )}
         <div className="relative group/save">

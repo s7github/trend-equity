@@ -283,16 +283,16 @@ Context: dedup already exists in two layers — a prompt "DO NOT REPEAT" block o
 
 Based on the competitive analysis in `trend-equity-brain/README.md`, the primary market gaps are resolved through these tasks:
 
-| ID    | Task                                                                                                  | Status | Owner  | Effort |
-| ----- | ----------------------------------------------------------------------------------------------------- | ------ | ------ | ------ |
-| TE-77 | Implement Tinder-like swipe interface for opportunity discovery (like/dislike/save, session tracking) | todo   | Claude | M      |
-| TE-78 | Convert from desktop-first to mobile-first design (touch gestures, responsive cards)                  | todo   | Claude | M      |
-| TE-79 | Add gamification system (streaks, achievements, social comparison, leaderboards)                      | todo   | Claude | S      |
-| TE-80 | Performance optimization (virtual scrolling, sub-2s loads, 60 FPS on mobile)                          | todo   | Claude | M      |
-| TE-81 | Progressive enhancement (details on save, time-boxed sessions, optional deep dive)                    | todo   | Claude | S      |
-| TE-82 | Add mobile-specific features (biometric auth, push notifications, offline support)                    | todo   | Claude | L      |
-| TE-83 | Implement analytics for engagement tracking (session duration, save rate, user journey)               | todo   | Claude | S      |
-| TE-84 | Create mobile-first responsive design system with touch-friendly interactions                         | todo   | Claude | M      |
+| ID    | Task                                                                                                  | Status            | Owner  | Effort |
+| ----- | ----------------------------------------------------------------------------------------------------- | ----------------- | ------ | ------ |
+| TE-77 | Implement Tinder-like swipe interface for opportunity discovery (like/dislike/save, session tracking) | done (2026-10-27) | Claude | M      |
+| TE-78 | Convert from desktop-first to mobile-first design (touch gestures, responsive cards)                  | done (2026-10-27) | Claude | M      |
+| TE-79 | Add gamification system (streaks, achievements, social comparison, leaderboards)                      | done (2026-10-27) | Claude | S      |
+| TE-80 | Performance optimization (virtual scrolling, sub-2s loads, 60 FPS on mobile)                          | todo              | Claude | M      |
+| TE-81 | Progressive enhancement (details on save, time-boxed sessions, optional deep dive)                    | todo              | Claude | S      |
+| TE-82 | Add mobile-specific features (biometric auth, push notifications, offline support)                    | todo              | Claude | L      |
+| TE-83 | Implement analytics for engagement tracking (session duration, save rate, user journey)               | done (2026-10-27) | Claude | S      |
+| TE-84 | Create mobile-first responsive design system with touch-friendly interactions                         | done (2026-10-27) | Claude | M      |
 
 **TE-77 user story:** As a user exploring startup opportunities, I want to swipe through ideas quickly (like/dislike) so I can find my next high-convidence opportunity without scrolling through 35 cards at once.
 

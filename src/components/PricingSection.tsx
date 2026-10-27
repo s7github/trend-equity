@@ -327,8 +327,6 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
     return 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600';
   };
 
-  const showcaseColor = selectedTier === 'builder' ? 'amber' : 'emerald';
-
   return (
     <div className="space-y-8 py-4">
       <div className="text-center space-y-2">
@@ -647,7 +645,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                   : 'md:grid-cols-3'
             } gap-4`}
           >
-            {(TIER_SHOWCASE[selectedTier] ?? TIER_SHOWCASE['free']).map((item, i) => {
+            {(TIER_SHOWCASE[selectedTier] ?? TIER_SHOWCASE['free']).map((item) => {
               const isClickable = item.onClick && activePlan === 'builder';
               const Wrapper = isClickable ? 'button' : 'div';
               return (

@@ -32,6 +32,7 @@ import { WeeklyRadarTab } from './components/tabs/WeeklyRadar';
 import { FuturecastingTab } from './components/tabs/Futurecasting';
 import { EmailDigestTab } from './components/tabs/EmailDigest';
 import { SavedIdeasTab } from './components/tabs/SavedIdeas';
+import { SwipeDiscovery } from './components/swipe';
 import EnterpriseLanding from './pages/EnterpriseLanding';
 
 // --- Utils ---
@@ -122,7 +123,7 @@ function MainApp() {
   }, [user]);
 
   const [activeTab, setActiveTab] = useState<
-    'feed' | 'saved' | 'weekly' | 'pro' | 'radar' | 'future' | 'digest'
+    'feed' | 'saved' | 'weekly' | 'pro' | 'radar' | 'future' | 'digest' | 'swipe'
   >('feed');
   const {
     weeklyBest,
@@ -377,6 +378,15 @@ function MainApp() {
             </button>
             <button
               role="tab"
+              aria-selected={activeTab === 'swipe'}
+              aria-controls="tabpanel-swipe"
+              onClick={() => setActiveTab('swipe')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'swipe' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Swipe
+            </button>
+            <button
+              role="tab"
               aria-selected={activeTab === 'saved'}
               aria-controls="tabpanel-saved"
               onClick={() => setActiveTab('saved')}
@@ -455,7 +465,22 @@ function MainApp() {
 
           {/* Feed Content — FIX (U-6): role="tabpanel" for accessibility */}
           <div role="tabpanel" id={`tabpanel-${activeTab}`} className="space-y-6">
-            {activeTab === 'feed' ? (
+            {activeTab === 'swipe' ? (
+              <SwipeDiscovery
+                ideas={dailyGen?.ideas || []}
+                tier={tier}
+                userSaves={userSaves}
+                isSaved={(ideaId) => userSaves.some((s) => s.idea.id === ideaId)}
+                onSave={(idea) =>
+                  toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'))
+                }
+                onUnsave={(ideaId) => {
+                  const idea = dailyGen?.ideas.find((i) => i.id === ideaId);
+                  if (idea) toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'));
+                }}
+                onUpgrade={() => setActiveTab('pro')}
+              />
+            ) : activeTab === 'feed' ? (
               <IdeaFeed
                 dailyGen={dailyGen}
                 customFeed={customFeed}

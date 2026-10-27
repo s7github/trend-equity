@@ -8,7 +8,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/): **Added 
 
 ### Added
 
-- **TE-08 Phase 2 — subscription lifecycle (TE-38…TE-42, 2026-07-29).** Cancels, plan switches, card updates and invoice history now run through the Stripe Customer Portal (`POST /api/portal`), and the app reflects real subscription state:
+- **UI Redesign: Swipe Interface & Mobile-First UX (TE-77, TE-78, TE-79, TE-83, TE-84).** Transformed the tab-heavy, desktop-first discovery into a mobile-first, swipe-based experience:
+  - New `SwipeDiscovery` view (Tinder-like swipe cards: swipe right to save, left to pass) with session tracking and streak gamification
+  - `SwipeCard` component with touch/mouse drag gestures, spring-based return animation, and visual like/pass indicators during drag
+  - `GamificationHUD` overlay showing daily progress, streak counter, and unlocked achievements
+  - `useSwipeGesture` hook for pointer drag tracking and swipe classification
+  - Swipe tab added to the main navigation, available to all tiers
+  - `logEvent()` analytics already tracks `tab_view`, `idea_save`, `quota_hit`, `upgrade_click`, `evidence_view` for engagement funnel
+
+### Fixed
+
+- **Export dropdown on idea cards was hover-only (unusable on touch).** Changed `IdeaCardHeader` export menu from `group-hover` to click-to-open with `AnimatePresence`, so it works on mobile/touch devices.
+- **Removed dead `showcaseColor` variable** from `PricingSection` (defined but never used).
+- **Removed dead dynamic class computation** — `showcaseColor` was dead code; the Tier Feature Showcase already used static ternary classes.
   - `useTier` exposes a read-only `SubscriptionInfo` (`proEndDate`, `cancelAtPeriodEnd`, `subscriptionStatus`, `hasBillingAccount`) straight from the Firestore snapshot; the pricing tab shows "Renews {date}" / "Ends {date}" and flags a payment issue while `past_due`.
   - New `customer.subscription.updated` webhook mirrors portal plan-switches and cancel-at-period-end onto the user doc (price id → tier via `tierForPriceId`). It never writes `tier: 'free'` — deletion and the expiry backstop own the end of paid access.
   - New `invoice.payment_failed` webhook sets `subscriptionStatus: 'past_due'` and raises a user alert with a fix path, deduped on the invoice id so dunning retries don't stack alerts. Tier is deliberately not dropped: Stripe's retries may still recover the payment.
