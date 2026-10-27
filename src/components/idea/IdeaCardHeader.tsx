@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import { Download, FileText, Share2, Bookmark, BookmarkCheck, Loader2, Zap } from 'lucide-react';
+import {
+  Download,
+  FileText,
+  Share2,
+  Bookmark,
+  BookmarkCheck,
+  Loader2,
+  Zap,
+  ShieldCheck,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Idea } from '../../types';
 
@@ -41,6 +50,15 @@ export const IdeaCardHeader: React.FC<IdeaCardHeaderProps> = ({
             <Zap className="w-3 h-3" />
             {heatBadge}
           </span>
+          {idea.signalVerified && (
+            <span
+              className="text-xs font-medium text-sky-400 bg-sky-500/10 px-2.5 py-0.5 rounded-full border border-sky-500/20 flex items-center gap-1"
+              title="Every source this idea cites returned live signals on the day it was generated."
+            >
+              <ShieldCheck className="w-3 h-3" />
+              Sources checked
+            </span>
+          )}
         </div>
         <h3 className="text-lg font-semibold text-white leading-snug group-hover:text-emerald-400 transition-colors">
           {idea.headline}

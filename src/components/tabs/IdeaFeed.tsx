@@ -3,6 +3,7 @@ import { Lock, RefreshCw, AlertCircle } from 'lucide-react';
 import { Idea, DailyGeneration, FilterState, UserSave, Tier } from '../../types';
 import { IdeaCard } from '../IdeaCard';
 import { FilterBar } from '../FilterBar';
+import { ProgressiveList } from '../ProgressiveList';
 import { CUSTOM_FEED_DAILY_LIMIT, DAILY_FEATURED_IDEAS, TIER_LIMITS } from '../../constants';
 import { IdeaFeedSkeleton } from '../layout/SkeletonLoaders';
 import { TimeRemaining, formatTimeRemaining } from '../../utils/timeUtils';
@@ -181,22 +182,28 @@ export const IdeaFeed: React.FC<IdeaFeedProps> = ({
             </div>
           ) : (
             <>
-              {visibleIdeas.map((idea) => (
-                <IdeaCard
-                  key={idea.id}
-                  idea={idea}
-                  isSaved={userSaves.some((s) => s.idea.id === idea.id)}
-                  onToggleSave={() => toggleSave(idea)}
-                  onUpdateIdea={updateIdea}
-                  isSaving={false}
-                  tier={tier}
-                  onExport={(fmt) => exportToPDF(idea, fmt)}
-                  user={user}
-                  handleLogin={handleLogin}
-                  isAdmin={isAdmin}
-                  onUpgrade={() => setActiveTab('pro')}
-                />
-              ))}
+              <ProgressiveList
+                items={visibleIdeas}
+                initialCount={DAILY_FEATURED_IDEAS}
+                pageSize={5}
+                renderItem={(idea) => (
+                  <IdeaCard
+                    key={idea.id}
+                    idea={idea}
+                    isSaved={userSaves.some((s) => s.idea.id === idea.id)}
+                    onToggleSave={() => toggleSave(idea)}
+                    onUpdateIdea={updateIdea}
+                    isSaving={false}
+                    tier={tier}
+                    onExport={(fmt) => exportToPDF(idea, fmt)}
+                    user={user}
+                    handleLogin={handleLogin}
+                    isAdmin={isAdmin}
+                    onUpgrade={() => setActiveTab('pro')}
+                  />
+                )}
+                className="space-y-6"
+              />
 
               {shouldGroupExtras && (
                 <button

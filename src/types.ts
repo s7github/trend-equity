@@ -27,6 +27,10 @@ export interface Idea {
   trendSources: string[];
   saturationLabel: string;
   heatBadge: string;
+  /** Every cited source had live signals on the generation date (TE-05, measure-first). */
+  signalVerified?: boolean;
+  /** Cited sources with no matching live-signal bucket that day. */
+  mismatchedSources?: string[];
   nextSteps: string[];
   fullActionPlan?: {
     roadmap: {

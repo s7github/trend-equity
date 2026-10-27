@@ -12,6 +12,8 @@
  * Cached in-memory for 1 hour to avoid hammering APIs on every generation.
  */
 
+import { getCached, setCached } from './cache';
+
 export interface LiveSignals {
   googleTrends: string[];
   productHuntLaunches: string[];
@@ -97,15 +99,27 @@ async function fetchReddit(): Promise<string[]> {
     const res = await fetchWithTimeout(
       'https://www.reddit.com/r/SaaS+startups+Entrepreneur+smallbusiness.json?sort=hot&limit=25&t=week'
     );
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`Reddit JSON API returned ${res.status}`);
     const json = (await res.json()) as any;
     const children = json?.data?.children ?? [];
     return children
       .filter((p: any) => p.data?.ups > 30 && !p.data?.stickied)
       .slice(0, 15)
       .map((p: any) => `[r/${p.data.subreddit}] "${p.data.title}" (${p.data.ups} upvotes)`);
-  } catch {
-    return [];
+  } catch (err: any) {
+    console.warn('[signals] Reddit JSON API failed, trying RSS fallback:', err?.message);
+    // Fallback: Reddit RSS feed (works without JSON API, lower freshness but resilient)
+    try {
+      const rssRes = await fetchWithTimeout(
+        'https://www.reddit.com/r/SaaS+startups+Entrepreneur+smallbusiness/.rss?sort=hot&limit=25'
+      );
+      if (!rssRes.ok) return [];
+      const xml = await rssRes.text();
+      return extractRssItems(xml, 15);
+    } catch (rssErr: any) {
+      console.warn('[signals] Reddit RSS fallback also failed:', rssErr?.message);
+      return [];
+    }
   }
 }
 
@@ -140,8 +154,9 @@ async function fetchTechCrunch(): Promise<string[]> {
 }
 
 // ── Cache ─────────────────────────────────────────────────────────────────────
-
-let _cache: { data: LiveSignals; expiresAt: number } | null = null;
+// Firestore-shared 1-hour cache so all serverless instances read the same
+// signal snapshot instead of each re-fetching external APIs (TE-06).
+const SIGNAL_CACHE_KEY = 'signals_live';
 const SIGNAL_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 export interface SignalMetrics {
@@ -150,53 +165,65 @@ export interface SignalMetrics {
 }
 
 export async function fetchLiveSignals(): Promise<LiveSignals> {
-  if (_cache && Date.now() < _cache.expiresAt) {
-    return { ..._cache.data, sourcesCached: true };
+  // 1. Try Firestore-shared cache first (TE-06: shared across instances)
+  try {
+    const cached = await getCached(SIGNAL_CACHE_KEY);
+    if (cached && Date.now() - cached.generatedAt < SIGNAL_TTL_MS) {
+      return { ...cached.result, sourcesCached: true };
+    }
+  } catch {
+    // Fall through to live fetch if cache read fails
   }
 
-  console.log('[DEBUG] Starting Promise.allSettled for signals...');
-  const [trends, ph, reddit, hn, tc] = await Promise.allSettled([
+  // 2. Fetch live signals from all sources concurrently
+  const startTime = Date.now();
+  const results = await Promise.allSettled([
     (async () => {
-      console.log('[DEBUG] Fetching Google Trends...');
       const r = await fetchGoogleTrends();
-      console.log('[DEBUG] Google Trends done');
-      return r;
+      return { source: 'googleTrends', data: r, error: null as string | null };
     })(),
     (async () => {
-      console.log('[DEBUG] Fetching Product Hunt...');
       const r = await fetchProductHunt();
-      console.log('[DEBUG] Product Hunt done');
-      return r;
+      return { source: 'productHuntLaunches', data: r, error: null as string | null };
     })(),
     (async () => {
-      console.log('[DEBUG] Fetching Reddit...');
-      const r = await fetchReddit();
-      console.log('[DEBUG] Reddit done');
-      return r;
+      try {
+        const r = await fetchReddit();
+        return { source: 'redditHotThreads', data: r, error: null as string | null };
+      } catch (err: any) {
+        return { source: 'redditHotThreads', data: [], error: err?.message };
+      }
     })(),
     (async () => {
-      console.log('[DEBUG] Fetching HN...');
       const r = await fetchHackerNews();
-      console.log('[DEBUG] HN done');
-      return r;
+      return { source: 'hnDiscussions', data: r, error: null as string | null };
     })(),
     (async () => {
-      console.log('[DEBUG] Fetching TechCrunch...');
       const r = await fetchTechCrunch();
-      console.log('[DEBUG] TechCrunch done');
-      return r;
+      return { source: 'techCrunchFunding', data: r, error: null as string | null };
     })(),
   ]);
 
   const signals: LiveSignals = {
-    googleTrends: trends.status === 'fulfilled' ? trends.value : [],
-    productHuntLaunches: ph.status === 'fulfilled' ? ph.value : [],
-    redditHotThreads: reddit.status === 'fulfilled' ? reddit.value : [],
-    hnDiscussions: hn.status === 'fulfilled' ? hn.value : [],
-    techCrunchFunding: tc.status === 'fulfilled' ? tc.value : [],
+    googleTrends: [],
+    productHuntLaunches: [],
+    redditHotThreads: [],
+    hnDiscussions: [],
+    techCrunchFunding: [],
     fetchedAt: new Date().toISOString(),
     sourcesCached: false,
   };
+
+  const failures: string[] = [];
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      const { source, data, error } = result.value;
+      (signals as any)[source] = data || [];
+      if (error) failures.push(`${source}: ${error}`);
+    } else {
+      failures.push(result.reason?.message || 'unknown source failure');
+    }
+  }
 
   const totalSignals =
     signals.googleTrends.length +
@@ -205,14 +232,38 @@ export async function fetchLiveSignals(): Promise<LiveSignals> {
     signals.hnDiscussions.length +
     signals.techCrunchFunding.length;
 
-  // Only cache if we got meaningful data
-  if (totalSignals > 0) {
-    _cache = { data: signals, expiresAt: Date.now() + SIGNAL_TTL_MS };
-  }
+  // 3. Log signal health for observability (TE-06 + TE-04)
+  const sourceCount = [
+    signals.googleTrends,
+    signals.productHuntLaunches,
+    signals.redditHotThreads,
+    signals.hnDiscussions,
+    signals.techCrunchFunding,
+  ].filter((s) => s.length > 0).length;
 
   console.log(
-    `[signals] Fetched: Google=${signals.googleTrends.length}, PH=${signals.productHuntLaunches.length}, Reddit=${signals.redditHotThreads.length}, HN=${signals.hnDiscussions.length}, TC=${signals.techCrunchFunding.length}`
+    `[signals] Fetched in ${Date.now() - startTime}ms: Google=${signals.googleTrends.length}, PH=${signals.productHuntLaunches.length}, Reddit=${signals.redditHotThreads.length}, HN=${signals.hnDiscussions.length}, TC=${signals.techCrunchFunding.length} (sources: ${sourceCount}/5)`
   );
+
+  if (failures.length > 0) {
+    console.warn(`[signals] Source failures: ${failures.join('; ')}`);
+  }
+
+  if (sourceCount === 0) {
+    console.warn(
+      '[signals] ADMIN ALERT: Zero signal sources returned — generation will be ungrounded'
+    );
+  }
+
+  // 4. Write to Firestore-shared cache if we got meaningful data (TE-06)
+  if (totalSignals > 0) {
+    try {
+      await setCached(SIGNAL_CACHE_KEY, signals);
+    } catch (cacheErr: any) {
+      console.warn('[signals] Failed to write signal cache:', cacheErr?.message);
+    }
+  }
+
   return signals;
 }
 

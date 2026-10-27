@@ -14,6 +14,24 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// The signal cache is Firestore-backed now (shared across serverless instances, TE-06).
+// Unmocked, these tests try to reach Firestore and hang until the 5s timeout.
+const { cacheStore, mockGetCached, mockSetCached } = vi.hoisted(() => {
+  const store = new Map<string, any>();
+  return {
+    cacheStore: store,
+    mockGetCached: vi.fn(async (key: string) => store.get(key) ?? null),
+    mockSetCached: vi.fn(async (key: string, result: any) => {
+      store.set(key, { result, generatedAt: Date.now() });
+    }),
+  };
+});
+
+vi.mock('../../../api/_lib/cache', () => ({
+  getCached: mockGetCached,
+  setCached: mockSetCached,
+}));
+
 // ── Mock global fetch ─────────────────────────────────────────────────────────
 
 const mockFetch = vi.fn();
@@ -61,6 +79,7 @@ describe('fetchLiveSignals', () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    cacheStore.clear();
     vi.stubGlobal('fetch', mockFetch);
   });
 
@@ -105,7 +124,8 @@ describe('fetchLiveSignals', () => {
     mockFetch
       .mockResolvedValueOnce(mockResponse(rssXml(['Trend A', 'Trend B']))) // Google Trends — OK
       .mockRejectedValueOnce(new Error('PH timeout')) // Product Hunt — fail
-      .mockRejectedValueOnce(new Error('Reddit timeout')) // Reddit — fail
+      .mockRejectedValueOnce(new Error('Reddit timeout')) // Reddit JSON
+      .mockRejectedValueOnce(new Error('Reddit RSS timeout')) // Reddit RSS fallback
       .mockRejectedValueOnce(new Error('HN timeout')) // HN — fail
       .mockRejectedValueOnce(new Error('TC timeout')); // TechCrunch — fail
 
@@ -272,6 +292,7 @@ describe('getMarketSignals', () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    cacheStore.clear();
     vi.stubGlobal('fetch', mockFetch);
   });
 

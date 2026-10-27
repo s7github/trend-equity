@@ -219,3 +219,63 @@ export function cleanDailyDisclaimer(disclaimer: unknown): string {
     textOf(disclaimer) || 'All ideas are AI-generated from market signals. Do your own diligence.';
   return text.replace(/\bunforseen\b/gi, 'unforeseen');
 }
+
+/**
+ * Verify that the sources an idea cites actually carried signals on the day it was
+ * generated.
+ *
+ * `trendSources` are platform-level citations ("Hacker News", "r/SaaS", "Product
+ * Hunt"), so verification is against the *set of sources that returned data* for
+ * that run - not against headline strings, which never appear in a citation and
+ * would mark every idea unverified. Measure-first: unverified ideas are flagged,
+ * never dropped.
+ */
+export interface SignalVerificationResult {
+  idea: any;
+  signalVerified: boolean;
+  mismatchedSources?: string[];
+}
+
+/** The five live-signal buckets, by the names the prompt shows the model. */
+export interface SignalSnapshot {
+  googleTrends?: string[];
+  productHuntLaunches?: string[];
+  redditHotThreads?: string[];
+  hnDiscussions?: string[];
+  techCrunchFunding?: string[];
+}
+
+const SOURCE_PATTERNS: { key: keyof SignalSnapshot; pattern: RegExp }[] = [
+  { key: 'googleTrends', pattern: /google\s*trends?/i },
+  { key: 'productHuntLaunches', pattern: /product\s*hunt/i },
+  { key: 'redditHotThreads', pattern: /reddit|r\/(saas|startups?|entrepreneur)/i },
+  { key: 'hnDiscussions', pattern: /hacker\s*news|\b(ask|show)\s*hn\b|\bhn\b/i },
+  { key: 'techCrunchFunding', pattern: /tech\s*crunch/i },
+];
+
+export function verifySignalCitations(
+  ideas: any[],
+  signalSnapshot: SignalSnapshot | null | undefined
+): SignalVerificationResult[] {
+  return ideas.map((idea) => {
+    const cited: string[] = Array.isArray(idea?.trendSources)
+      ? idea.trendSources.filter((source: unknown) => typeof source === 'string' && source.trim())
+      : [];
+
+    // Nothing cited, nothing verifiable - flagged, but not as a mismatch.
+    if (cited.length === 0) return { idea, signalVerified: false };
+
+    const mismatched = cited.filter((source) => {
+      const bucket = SOURCE_PATTERNS.find((entry) => entry.pattern.test(source));
+      if (!bucket) return true; // a source the pipeline never fetched
+      const available = signalSnapshot?.[bucket.key];
+      return !Array.isArray(available) || available.length === 0;
+    });
+
+    return {
+      idea,
+      signalVerified: mismatched.length === 0,
+      ...(mismatched.length > 0 ? { mismatchedSources: mismatched } : {}),
+    };
+  });
+}

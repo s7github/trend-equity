@@ -43,8 +43,9 @@ export function useSwipeGesture({ thresholdPx = 60 }: { thresholdPx?: number } =
   const springX = useSpring(x, { stiffness: 300, damping: 30 });
   const springY = useSpring(y, { stiffness: 300, damping: 30 });
 
-  // Rotation derived from horizontal drag: -12deg left, +12deg right.
-  const rotate = useTransform(x, [0, thresholdPx], [-12, 12]);
+  // Rotation derived from horizontal drag: -12deg left, 0 at rest, +12deg right.
+  // A two-stop range pegged a card that is not being dragged at -12deg.
+  const rotate = useTransform(x, [-thresholdPx, 0, thresholdPx], [-12, 0, 12]);
 
   const classifySwipe = useCallback((): 'left' | 'right' | 'up' | 'down' | null => {
     const dx = x.get();

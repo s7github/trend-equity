@@ -11,7 +11,9 @@ import { useAuth } from './hooks/useAuth';
 import { useTier } from './hooks/useTier';
 import { useCheckout } from './hooks/useCheckout';
 import { useAlerts } from './hooks/useAlerts';
-import { useIdeas } from './hooks/useIdeas';
+import { useDailyFeed } from './hooks/useDailyFeed';
+import { useCustomFeed } from './hooks/useCustomFeed';
+import { useIdeaMutations } from './hooks/useIdeaMutations';
 import { useWeeklyBest } from './hooks/useWeeklyBest';
 import { useAnalyzeIdea } from './hooks/useAnalyzeIdea';
 
@@ -67,29 +69,17 @@ function MainApp() {
     loading: alertsLoading,
   } = useAlerts(user);
 
-  const {
-    dailyGen,
-    userSaves,
-    feedSaves,
-    customSaves,
-    loading,
-    generating,
-    error: ideasError,
-    customFeed,
-    customFeedVisible,
-    customFeedLoading,
-    customFeedError,
-    filters,
-    setFilters,
-    toggleSave,
-    updateIdea,
-    getFilteredIdeas,
-    generateCustomRequirementFeed,
-    toggleCustomFeedView,
-    triggerGeneration,
-    fetchDaily,
-    timeUntilGeneration,
-  } = useIdeas(user, tier, authReady, isAdmin);
+  const daily = useDailyFeed(user, tier, authReady);
+  const custom = useCustomFeed(user, tier, authReady, daily.filters, daily.setFilters);
+  const { updateIdea } = useIdeaMutations(
+    user,
+    daily.dailyGen,
+    daily.setDailyGen,
+    custom.setCustomFeed,
+    daily.setUserSaves,
+    daily.userSaves,
+    isAdmin
+  );
 
   const analyzeIdeaHook = useAnalyzeIdea(user, tier, authReady);
 
@@ -260,11 +250,11 @@ function MainApp() {
   }
 
   const onToggleSaveLocal = (idea: Idea) => {
-    toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'));
+    daily.toggleSave(idea, handleLogin, () => setActiveTab('pro'));
   };
 
   const onSaveCustomIdeaLocal = (idea: Idea, userInput?: string) => {
-    toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'), 'custom', userInput);
+    daily.toggleSave(idea, handleLogin, () => setActiveTab('pro'), 'custom', userInput);
   };
 
   const onUpgradeToBuilder = () => {
@@ -289,7 +279,7 @@ function MainApp() {
   };
 
   // Full-page loader only for INITIAL Daily AI Generation
-  if (generating && !dailyGen) {
+  if (daily.generating && !daily.dailyGen) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 text-center">
         <div className="relative">
@@ -325,8 +315,8 @@ function MainApp() {
           setShowAlerts={setShowAlerts}
           handleLogout={handleLogout}
           handleLogin={handleLogin}
-          triggerGeneration={triggerGeneration}
-          generating={generating}
+          triggerGeneration={daily.triggerGeneration}
+          generating={daily.generating}
         />
 
         <AlertsPanel
@@ -393,9 +383,9 @@ function MainApp() {
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'saved' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
               Saved{' '}
-              {userSaves.length > 0 && (
+              {daily.userSaves.length > 0 && (
                 <span className="ml-1 text-xs bg-zinc-700 text-zinc-300 px-1.5 py-0.5 rounded-full">
-                  {userSaves.length}
+                  {daily.userSaves.length}
                   {tier === 'free' ? `/${TIER_LIMITS.free.monthlySaves}` : ''}
                 </span>
               )}
@@ -467,53 +457,52 @@ function MainApp() {
           <div role="tabpanel" id={`tabpanel-${activeTab}`} className="space-y-6">
             {activeTab === 'swipe' ? (
               <SwipeDiscovery
-                ideas={dailyGen?.ideas || []}
+                ideas={(daily.dailyGen?.ideas || []).slice(0, TIER_LIMITS[tier].dailyIdeas)}
                 tier={tier}
-                userSaves={userSaves}
-                isSaved={(ideaId) => userSaves.some((s) => s.idea.id === ideaId)}
-                onSave={(idea) =>
-                  toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'))
-                }
+                isSignedIn={!!user}
+                userSaves={daily.userSaves}
+                isSaved={(ideaId) => daily.userSaves.some((s) => s.idea.id === ideaId)}
+                onSave={(idea) => daily.toggleSave(idea, handleLogin, () => setActiveTab('pro'))}
                 onUnsave={(ideaId) => {
-                  const idea = dailyGen?.ideas.find((i) => i.id === ideaId);
-                  if (idea) toggleSave(idea, TIER_LIMITS, handleLogin, () => setActiveTab('pro'));
+                  const idea = daily.dailyGen?.ideas.find((i) => i.id === ideaId);
+                  if (idea) daily.toggleSave(idea, handleLogin, () => setActiveTab('pro'));
                 }}
                 onUpgrade={() => setActiveTab('pro')}
               />
             ) : activeTab === 'feed' ? (
               <IdeaFeed
-                dailyGen={dailyGen}
-                customFeed={customFeed}
-                customFeedVisible={customFeedVisible}
-                customFeedLoading={customFeedLoading}
-                customFeedError={customFeedError}
-                onGenerateCustomFeed={generateCustomRequirementFeed}
-                onToggleCustomFeedView={toggleCustomFeedView}
-                userSaves={userSaves}
-                filters={filters}
-                setFilters={setFilters}
+                dailyGen={daily.dailyGen}
+                customFeed={custom.customFeed}
+                customFeedVisible={custom.customFeedVisible}
+                customFeedLoading={custom.customFeedLoading}
+                customFeedError={custom.customFeedError}
+                onGenerateCustomFeed={custom.generateCustomRequirementFeed}
+                onToggleCustomFeedView={custom.toggleCustomFeedView}
+                userSaves={daily.userSaves}
+                filters={daily.filters}
+                setFilters={daily.setFilters}
                 tier={tier}
                 isAdmin={isAdmin}
                 onExportCSV={() => {
                   if (tier === 'free') {
                     setActiveTab('pro');
                   } else {
-                    exportListToCSV(dailyGen?.ideas || [], activeTab, today);
+                    exportListToCSV(daily.dailyGen?.ideas || [], activeTab, today);
                   }
                 }}
-                onExportPDF={() => exportListToPDF(dailyGen?.ideas || [], activeTab, today)}
+                onExportPDF={() => exportListToPDF(daily.dailyGen?.ideas || [], activeTab, today)}
                 toggleSave={onToggleSaveLocal}
                 updateIdea={handleUpdateIdea}
-                getFilteredIdeas={getFilteredIdeas}
+                getFilteredIdeas={daily.getFilteredIdeas}
                 exportToPDF={exportDocument}
                 setActiveTab={setActiveTab}
-                triggerGeneration={triggerGeneration}
-                loading={loading}
-                generating={generating}
-                error={ideasError}
+                triggerGeneration={daily.triggerGeneration}
+                loading={daily.loading}
+                generating={daily.generating}
+                error={daily.error}
                 user={user}
                 handleLogin={handleLogin}
-                timeUntilGeneration={timeUntilGeneration}
+                timeUntilGeneration={daily.timeUntilGeneration}
               />
             ) : activeTab === 'radar' ? (
               <WeeklyRadarTab
@@ -541,14 +530,14 @@ function MainApp() {
               <EmailDigestTab user={user} />
             ) : activeTab === 'saved' ? (
               <SavedIdeasTab
-                feedSaves={feedSaves}
-                customSaves={customSaves}
+                feedSaves={daily.feedSaves}
+                customSaves={daily.customSaves}
                 toggleSave={onToggleSaveLocal}
                 toggleCustomSave={onSaveCustomIdeaLocal}
                 updateIdea={handleUpdateIdea}
                 tier={tier}
                 exportToPDF={exportDocument}
-                loading={loading}
+                loading={daily.loading}
                 user={user}
                 handleLogin={handleLogin}
                 onOpenAnalyzeModal={() => setShowAnalyzeModal(true)}
@@ -561,7 +550,7 @@ function MainApp() {
                 error={errorWeekly}
                 fetched={fetchedWeekly}
                 onFetch={fetchWeeklyBest}
-                userSaves={userSaves}
+                userSaves={daily.userSaves}
                 toggleSave={onToggleSaveLocal}
                 updateIdea={handleUpdateIdea}
                 tier={tier}
@@ -591,7 +580,7 @@ function MainApp() {
                 <span className="text-xs font-medium">Disclaimer</span>
               </div>
               <p className="text-xs text-zinc-500 leading-relaxed italic">
-                {dailyGen?.disclaimer ||
+                {daily.dailyGen?.disclaimer ||
                   'All ideas cite real signals. Inspiration only — do your own diligence.'}
               </p>
             </div>
@@ -633,14 +622,14 @@ function MainApp() {
         </main>
 
         {/* Ideas error — retry button */}
-        {ideasError && (
+        {daily.error && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
             <button
-              onClick={() => fetchDaily(true)}
+              onClick={() => daily.fetchDaily(true)}
               className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-full shadow-2xl hover:bg-red-500 transition-all font-bold text-sm"
             >
               <RefreshCw className="w-4 h-4" />
-              {ideasError} — RETRY
+              {daily.error} — RETRY
             </button>
           </div>
         )}
@@ -683,7 +672,7 @@ function MainApp() {
           handleLogin={handleLogin}
           onAnalyzeComplete={() => {}}
           onSaveCustomIdea={onSaveCustomIdeaLocal}
-          customSavesCount={customSaves.length}
+          customSavesCount={daily.customSaves.length}
           analyzeIdeaHook={analyzeIdeaHook}
           updateIdea={handleUpdateIdea}
           exportToPDF={exportDocument}

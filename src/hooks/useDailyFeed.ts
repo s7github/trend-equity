@@ -1,0 +1,490 @@
+import { useState, useEffect, useCallback } from 'react';
+import { User } from 'firebase/auth';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+  serverTimestamp,
+  deleteDoc,
+  addDoc,
+  collection,
+  query,
+  where,
+} from 'firebase/firestore';
+import { TIER_LIMITS } from '../constants';
+import { db } from '../firebase';
+import { Idea, DailyGeneration, UserSave, FilterState, Tier } from '../types';
+import { generateDailyIdeas } from '../services/geminiService';
+import { handleFirestoreError, OperationType } from '../utils/errorUtils';
+import {
+  parseDailyGenerationTime,
+  getTimeUntilNextGeneration,
+  TimeRemaining,
+} from '../utils/timeUtils';
+import { logEvent } from '../services/analyticsService';
+
+/** Which list a save belongs to — mirrors `UserSave.saveType`. */
+type SaveType = NonNullable<UserSave['saveType']>;
+
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefined(item)) as T;
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, stripUndefined(entry)])
+    ) as T;
+  }
+  return value;
+}
+
+function stableId(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+
+const DEFAULT_FILTERS: FilterState = {
+  industries: [],
+  productTypes: [],
+  riskLevels: [],
+  effortLevels: [],
+  marketFocus: [],
+  teamSize: [],
+  excludeCategories: [],
+  customKeywords: '',
+  sortBy: 'quality',
+};
+
+const CACHE_KEY = 'te_daily_feed';
+
+const getCachedFeed = (): DailyGeneration | null => {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    const today = new Date().toISOString().split('T')[0];
+    if (cached?.date === today && cached?.ideas?.length > 0) {
+      return cached as DailyGeneration;
+    }
+    localStorage.removeItem(CACHE_KEY);
+  } catch {
+    localStorage.removeItem(CACHE_KEY);
+  }
+  return null;
+};
+
+const setCachedFeed = (gen: DailyGeneration) => {
+  try {
+    const serializable = { ...gen, generatedAt: new Date().toISOString() };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(serializable));
+  } catch {
+    // localStorage full or disabled — silently ignore
+  }
+};
+
+export function useDailyFeed(user: User | null, tier: Tier, authReady: boolean) {
+  const [dailyGen, setDailyGen] = useState<DailyGeneration | null>(null);
+  const [userSaves, setUserSaves] = useState<UserSave[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [timeUntilGeneration, setTimeUntilGeneration] = useState<TimeRemaining | null>(null);
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // --- Fetch Daily ---
+  const triggerGeneration = useCallback(async () => {
+    if (generating) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const isRefresh = !!dailyGen;
+      const result = await generateDailyIdeas(undefined, undefined, isRefresh);
+      const newGen: DailyGeneration = {
+        date: today,
+        intro: result.intro,
+        ideas: result.ideas.map((idea: any) => ({
+          ...idea,
+          id: `${today}-${stableId(idea.headline)}`,
+        })),
+        disclaimer: result.disclaimer,
+        generatedAt: new Date().toISOString(),
+      };
+      setDailyGen(newGen);
+      setCachedFeed(newGen);
+    } catch (err: any) {
+      console.error('Generation Error:', err);
+      const msg = err?.message || '';
+      if (msg.includes('Sign in')) {
+        setDailyGen(null);
+        const genTime = parseDailyGenerationTime(import.meta.env.VITE_DAILY_GENERATION_TIME);
+        const timeRemaining = getTimeUntilNextGeneration(genTime.hours, genTime.minutes);
+        setTimeUntilGeneration(timeRemaining);
+      } else if (msg.includes('permission-denied') || msg.includes('permissions')) {
+        setError('Access denied. Please ensure you are signed in.');
+      } else if (msg.includes('Quota exceeded')) {
+        setError('Daily quota reached. Please try again tomorrow.');
+      } else if (msg.includes('offline')) {
+        setError('You appear to be offline.');
+      } else {
+        setError(msg || 'AI generation failed. Please refresh to try again.');
+      }
+    } finally {
+      setGenerating(false);
+    }
+  }, [today, dailyGen, generating]);
+
+  const fetchDaily = useCallback(
+    async (isRetry = false) => {
+      if (!isRetry) setLoading(true);
+      setError(null);
+
+      if (!isRetry) {
+        const cached = getCachedFeed();
+        if (cached) {
+          setDailyGen(cached);
+          setLoading(false);
+          return;
+        }
+      }
+
+      try {
+        const result = await generateDailyIdeas();
+        const data: DailyGeneration = {
+          date: today,
+          intro: result.intro,
+          ideas: (result.ideas || []).map((idea: any) => ({
+            ...idea,
+            id: `${today}-${stableId(idea.headline)}`,
+          })),
+          disclaimer: result.disclaimer,
+          generatedAt: result.generatedAt || new Date().toISOString(),
+        };
+        setDailyGen(data);
+        setCachedFeed(data);
+      } catch (err: any) {
+        console.error('Fetch Error:', err);
+        const msg = err?.message || '';
+        if (msg.includes('Sign in')) {
+          setDailyGen(null);
+          const genTime = parseDailyGenerationTime(import.meta.env.VITE_DAILY_GENERATION_TIME);
+          const timeRemaining = getTimeUntilNextGeneration(genTime.hours, genTime.minutes);
+          setTimeUntilGeneration(timeRemaining);
+        } else if (msg.includes('permission-denied') || msg.includes('permissions')) {
+          setError('Access denied. Please ensure you are signed in.');
+        } else if (msg.includes('Quota exceeded')) {
+          setError('Daily quota reached. Please try again tomorrow.');
+        } else if (msg.includes('offline')) {
+          setError('You appear to be offline.');
+        } else {
+          setError(msg || "Failed to load today's ideas.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [today]
+  );
+
+  useEffect(() => {
+    if (!authReady) return;
+    fetchDaily();
+  }, [fetchDaily, authReady]);
+
+  // --- User Profile Sync (Filters) ---
+  useEffect(() => {
+    setFilters(DEFAULT_FILTERS);
+    if (!user) return;
+
+    const fetchInitialFilters = async () => {
+      const userRef = doc(db, 'users', user.uid);
+      try {
+        const docSnap = await getDoc(userRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.filters) {
+            setFilters((prev) => ({
+              ...prev,
+              ...data.filters,
+              industries: data.filters.industries || [],
+              productTypes: data.filters.productTypes || [],
+              riskLevels: data.filters.riskLevels || [],
+              effortLevels: data.filters.effortLevels || [],
+              marketFocus: data.filters.marketFocus || [],
+              teamSize: data.filters.teamSize || [],
+              excludeCategories: data.filters.excludeCategories || [],
+            }));
+          }
+        }
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          console.debug('[FILTERS] User doc not accessible, using defaults');
+        } else {
+          handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+        }
+      }
+    };
+    fetchInitialFilters();
+  }, [user]);
+
+  // --- Save Filters ---
+  useEffect(() => {
+    if (!user || !authReady) return;
+    const saveFilters = async () => {
+      const userRef = doc(db, 'users', user.uid);
+      try {
+        await setDoc(userRef, { filters, updatedAt: serverTimestamp() }, { merge: true });
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          console.debug('[FILTERS] Cannot save filters to Firestore yet');
+        } else {
+          console.error('Failed to save filters:', err);
+        }
+      }
+    };
+    const timeoutId = setTimeout(saveFilters, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [filters, user, authReady]);
+
+  // --- User Saves Sync ---
+  useEffect(() => {
+    setUserSaves([]);
+    if (!user) return;
+
+    const q = query(collection(db, 'user_saves'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const saves = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as UserSave);
+        setUserSaves(saves);
+      },
+      (err) => {
+        if (err?.code === 'permission-denied') {
+          console.debug('[SAVES] No permission to read saves (new user?), skipping');
+          setUserSaves([]);
+        } else {
+          console.error('Saves Sync Error:', err);
+        }
+      }
+    );
+    return () => unsubscribe();
+  }, [user]);
+
+  const feedSaves = userSaves.filter((s) => !s.saveType || s.saveType === 'feed');
+  const customSaves = userSaves.filter((s) => s.saveType === 'custom');
+
+  const toggleSave = useCallback(
+    async (
+      idea: Idea,
+      onLoginNeeded: () => void,
+      onUpgradeNeeded: () => void,
+      saveType: SaveType = 'feed',
+      userInput?: string
+    ) => {
+      if (!user) {
+        onLoginNeeded();
+        return;
+      }
+
+      // The monthly save quota gates feed saves only. Custom (analyzed) saves have
+      // their own limit, enforced by AnalyzeIdeaModal/SavedIdeas before the call.
+      if (saveType === 'feed') {
+        const saveLimit = TIER_LIMITS[tier]?.monthlySaves ?? Infinity;
+        if (isFinite(saveLimit) && feedSaves.length >= saveLimit) {
+          logEvent('quota_hit', { type: 'monthlySaves', tier, limit: saveLimit });
+          onUpgradeNeeded();
+          return;
+        }
+      }
+
+      const existing = userSaves.find(
+        (s) => s.idea.id === idea.id && (!s.saveType || s.saveType === saveType)
+      );
+      try {
+        if (existing) {
+          await deleteDoc(doc(db, 'user_saves', existing.id!));
+        } else {
+          await addDoc(
+            collection(db, 'user_saves'),
+            stripUndefined({
+              userId: user.uid,
+              idea,
+              savedAt: serverTimestamp(),
+              saveType,
+              userInput,
+            })
+          );
+          logEvent('idea_save', { ideaId: idea.id, headline: idea.headline, type: saveType });
+        }
+      } catch (err: any) {
+        console.error('Save Error:', err);
+        setError('Failed to save idea. Please try again.');
+      }
+    },
+    [user, tier, feedSaves.length, userSaves]
+  );
+
+  const getFilteredIdeas = useCallback(
+    (ideas: Idea[]) => {
+      let filtered = [...ideas];
+
+      if (filters.industries?.length > 0) {
+        filtered = filtered.filter((idea) =>
+          filters.industries.some((ind) => {
+            const searchTerms = ind.toLowerCase().split(/[/\s-]/);
+            return searchTerms.some(
+              (term) =>
+                idea.categoryTags.some((tag) => tag.toLowerCase().includes(term)) ||
+                idea.headline.toLowerCase().includes(term) ||
+                idea.pitch.toLowerCase().includes(term)
+            );
+          })
+        );
+      }
+
+      if (filters.productTypes?.length > 0) {
+        filtered = filtered.filter((idea) => {
+          const isDigital = idea.categoryTags.some(
+            (tag) =>
+              tag.toLowerCase().includes('digital') ||
+              tag.toLowerCase().includes('saas') ||
+              tag.toLowerCase().includes('software') ||
+              tag.toLowerCase().includes('app')
+          );
+          const isPhysical = idea.categoryTags.some(
+            (tag) =>
+              tag.toLowerCase().includes('physical') ||
+              tag.toLowerCase().includes('hardware') ||
+              tag.toLowerCase().includes('sustainable') ||
+              tag.toLowerCase().includes('product')
+          );
+          if (filters.productTypes.includes('Digital') && isDigital) return true;
+          if (filters.productTypes.includes('Physical') && isPhysical) return true;
+          return false;
+        });
+      }
+
+      if (filters.riskLevels?.length > 0) {
+        filtered = filtered.filter((idea) => {
+          const score = idea.revenuePotentialScore;
+          const isLow = score < 5;
+          const isHigh = score > 8;
+          const isMedium = score >= 5 && score <= 8;
+          if (filters.riskLevels.includes('Low') && isLow) return true;
+          if (filters.riskLevels.includes('Medium') && isMedium) return true;
+          if (filters.riskLevels.includes('High') && isHigh) return true;
+          return false;
+        });
+      }
+
+      if (filters.effortLevels?.length > 0) {
+        filtered = filtered.filter((idea) =>
+          filters.effortLevels.some((eff) =>
+            idea.costEffort.toLowerCase().includes(eff.toLowerCase())
+          )
+        );
+      }
+
+      if (filters.marketFocus?.length > 0) {
+        filtered = filtered.filter((idea) =>
+          filters.marketFocus.some((m) => {
+            if (m === 'Local Market') {
+              return idea.categoryTags.some((tag) => tag.toLowerCase().includes('local market'));
+            }
+            return (
+              idea.pitch.toLowerCase().includes(m.toLowerCase()) ||
+              idea.trendSources.some((s) => s.toLowerCase().includes(m.toLowerCase())) ||
+              idea.vcJustification.toLowerCase().includes(m.toLowerCase())
+            );
+          })
+        );
+      }
+
+      if (filters.teamSize?.length > 0) {
+        filtered = filtered.filter((idea) => {
+          const costEffort = idea.costEffort.toLowerCase();
+          const isSolo = costEffort.includes('solo') || costEffort.includes('low');
+          const isTeam =
+            costEffort.includes('team') ||
+            costEffort.includes('funding') ||
+            costEffort.includes('co-founder');
+          const isSmall = !isSolo && !isTeam;
+          if (filters.teamSize.includes('Solo-friendly') && isSolo) return true;
+          if (filters.teamSize.includes('Small team (2–5)') && isSmall) return true;
+          if (filters.teamSize.includes('Needs co-founder/funding round') && isTeam) return true;
+          return false;
+        });
+      }
+
+      if (tier === 'builder' && filters.customKeywords) {
+        const keywords = filters.customKeywords
+          .toLowerCase()
+          .split(',')
+          .map((k) => k.trim());
+        filtered = filtered.filter((idea) =>
+          keywords.some(
+            (k) =>
+              idea.headline.toLowerCase().includes(k) ||
+              idea.pitch.toLowerCase().includes(k) ||
+              idea.categoryTags.some((tag) => tag.toLowerCase().includes(k))
+          )
+        );
+      }
+
+      if (tier === 'builder' && filters.excludeCategories?.length > 0) {
+        filtered = filtered.filter(
+          (idea) =>
+            !filters.excludeCategories.some((exc) =>
+              idea.categoryTags.some((tag) => tag.toLowerCase().includes(exc.toLowerCase()))
+            )
+        );
+      }
+
+      filtered.sort((a, b) => {
+        if (filters.sortBy === 'quality') {
+          const aScore = a.qualityScore ?? a.qualityScorePrecheck ?? a.revenuePotentialScore ?? 0;
+          const bScore = b.qualityScore ?? b.qualityScorePrecheck ?? b.revenuePotentialScore ?? 0;
+          return bScore - aScore;
+        }
+        if (filters.sortBy === 'revenue') return b.revenuePotentialScore - a.revenuePotentialScore;
+        if (filters.sortBy === 'effort') {
+          const getEffort = (s: string) => {
+            s = s.toLowerCase();
+            if (s.includes('low')) return 0;
+            if (s.includes('high')) return 2;
+            return 1;
+          };
+          return getEffort(a.costEffort) - getEffort(b.costEffort);
+        }
+        return 0;
+      });
+
+      return filtered;
+    },
+    [filters, tier]
+  );
+
+  return {
+    dailyGen,
+    setDailyGen,
+    userSaves,
+    setUserSaves,
+    feedSaves,
+    customSaves,
+    loading,
+    generating,
+    error,
+    filters,
+    setFilters,
+    toggleSave,
+    getFilteredIdeas,
+    triggerGeneration,
+    fetchDaily,
+    timeUntilGeneration,
+  };
+}

@@ -115,10 +115,11 @@ describe('POST /api/generate/radar', () => {
 
     await handler(req, res);
 
-    expect(mockSetCached).toHaveBeenCalledOnce();
-    const [key, value] = mockSetCached.mock.calls[0];
-    expect(key).toContain('radar');
-    expect(value).toEqual(MOCK_RADAR_RESPONSE);
+    // The shared signal cache (TE-06) writes too, so assert the radar entry by key
+    // rather than a total call count.
+    const radarWrite = mockSetCached.mock.calls.find(([key]) => key.includes('radar'));
+    expect(radarWrite).toBeDefined();
+    expect(radarWrite![1]).toEqual(MOCK_RADAR_RESPONSE);
   });
 
   it('attaches _usage response for authenticated user', async () => {

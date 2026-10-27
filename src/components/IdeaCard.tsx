@@ -48,7 +48,7 @@ interface IdeaCardProps {
   onUpgrade?: () => void;
 }
 
-export const IdeaCard: React.FC<IdeaCardProps> = ({
+const IdeaCardComponent: React.FC<IdeaCardProps> = ({
   idea,
   isSaved,
   onToggleSave,
@@ -543,3 +543,5 @@ export const IdeaCard: React.FC<IdeaCardProps> = ({
     </motion.div>
   );
 };
+
+export const IdeaCard = React.memo(IdeaCardComponent);

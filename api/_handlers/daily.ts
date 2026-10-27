@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { DocumentReference } from 'firebase-admin/firestore';
 import AI from '../_lib/ai-provider';
 const { generateWithAI, dailyResponseSchema, getToday, normalizeAIResponse } = AI;
 import { getMarketSignals, formatSignalsForPrompt } from '../_lib/signals';
@@ -13,8 +14,13 @@ import {
   saveIdeaEmbeddings,
   getDedupeThreshold,
   getRecentEmbeddings,
+  cosineSim,
 } from '../_lib/embeddings';
-import { cleanDailyDisclaimer, prepareCandidatesForCritique } from '../_lib/idea-quality';
+import {
+  cleanDailyDisclaimer,
+  prepareCandidatesForCritique,
+  verifySignalCitations,
+} from '../_lib/idea-quality';
 import { savePredictions } from '../_lib/prediction-tracker';
 
 // Overgenerate candidates, then a stronger critic model publishes only the top N.
@@ -26,6 +32,14 @@ const PUBLISH_COUNT = 35;
 // instances — an in-memory Map only ever limits the single instance that handles
 // the request, which on Vercel is effectively no limit at all.
 const IP_DAILY_LIMIT = 5;
+
+// Generation lock TTL: 10 minutes (TE-07). Prevents dead locks from blocking
+// all subsequent generations for the day.
+const LOCK_TTL_MS = 10 * 60 * 1000;
+
+// Intra-day diversity guard (TE-30): max ideas from a tight similarity cluster
+// that may publish in a single day. Prevents the feed from echoing one hot concept.
+const MAX_PER_CLUSTER = 3;
 
 // A 503 "AI generation temporarily unavailable" tells the caller to retry shortly, which
 // is only honest for a provider or network failure. Mapping *every* throw to it hides our
@@ -60,6 +74,111 @@ function sanitiseInput(value: unknown, maxLen = 100): string {
     .slice(0, maxLen);
 }
 
+/**
+ * Intra-day diversity guard (TE-30). Clusters published ideas by embedding
+ * similarity and caps how many ideas from a tight cluster may publish in a
+ * single day, so the feed spans distinct problem spaces instead of echoing
+ * one hot concept. Backfills dropped slots from the critic-rejected pool.
+ */
+interface DiversityResult {
+  published: any[];
+  rejected: any[];
+  stats: {
+    clustersDropped: number;
+    backfilled: number;
+    clusters: { id: string; size: number }[];
+  };
+}
+
+function applyDiversityGuard(
+  published: any[],
+  rejected: any[],
+  vectorsByHeadline: Map<string, number[]>
+): DiversityResult {
+  const clusterThreshold = 0.78; // ideas above this similarity are in the same cluster
+
+  // Build a headline → vector lookup for published ideas
+  const publishedWithVectors = published.map((idea) => ({
+    ...idea,
+    vector: vectorsByHeadline.get(idea.headline),
+  }));
+
+  // Greedy clustering: assign each published idea to a cluster based on
+  // cosine similarity to the cluster's first member.
+  const clusters: { headline: string; vector: number[]; members: any[] }[] = [];
+
+  for (const idea of publishedWithVectors) {
+    const v = idea.vector;
+    if (!v) {
+      // No vector — put in its own cluster
+      clusters.push({ headline: idea.headline, vector: [], members: [idea] });
+      continue;
+    }
+
+    let assigned = false;
+    for (const cluster of clusters) {
+      if (!cluster.vector || cluster.vector.length === 0) continue;
+      const sim = cosineSim(v, cluster.vector);
+      if (sim >= clusterThreshold) {
+        cluster.members.push(idea);
+        assigned = true;
+        break;
+      }
+    }
+
+    if (!assigned) {
+      clusters.push({ headline: idea.headline, vector: v, members: [idea] });
+    }
+  }
+
+  // Enforce cap per cluster, collect overflow
+  const clustersDropped: { id: string; size: number }[] = [];
+  const overflow: any[] = [];
+  const kept: any[] = [];
+
+  for (const cluster of clusters) {
+    if (cluster.members.length <= MAX_PER_CLUSTER) {
+      kept.push(...cluster.members);
+    } else {
+      // Sort members by quality score if available, keep the top MAX_PER_CLUSTER
+      const sorted = [...cluster.members].sort(
+        (a, b) =>
+          (b.qualityScore ?? b.qualityScorePrecheck ?? 0) -
+          (a.qualityScore ?? a.qualityScorePrecheck ?? 0)
+      );
+      kept.push(...sorted.slice(0, MAX_PER_CLUSTER));
+      overflow.push(...sorted.slice(MAX_PER_CLUSTER));
+      clustersDropped.push({ id: cluster.headline, size: cluster.members.length });
+    }
+  }
+
+  // Backfill overflow slots from critic-rejected candidates (fresh problem spaces)
+  const backfilled: any[] = [];
+  const backfillSources = [...rejected].sort(
+    (a, b) =>
+      (b.qualityScore ?? b.qualityScorePrecheck ?? 0) -
+      (a.qualityScore ?? a.qualityScorePrecheck ?? 0)
+  );
+
+  const slotsNeeded = published.length - kept.length;
+  for (let i = 0; i < Math.min(slotsNeeded, backfillSources.length); i++) {
+    backfilled.push(backfillSources[i]);
+  }
+
+  const finalPublished = [...kept, ...backfilled];
+  const finalRejected = [...overflow.slice(backfilled.length)];
+
+  return {
+    published: finalPublished,
+    rejected: finalRejected,
+    stats: {
+      clustersDropped: clustersDropped.length,
+      backfilled: backfilled.length,
+      clusters: clustersDropped,
+    },
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -70,6 +189,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { date, country, countryCount, refresh } = req.body;
   const today = sanitiseInput(date, 10) || getToday();
+
+  // Generation lock state lives outside the try so the finally can release it (TE-07).
+  const runId = `${today}_${Date.now()}`;
+  let lockRef: DocumentReference | null = null;
+  let lockOwned = false;
 
   try {
     const db = getAdminDb();
@@ -114,15 +238,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`[daily] Triggering generation for ${today} (refresh=${!!refresh})`);
 
-    // 5. Locking: Prevent concurrent AI calls
-    const lockRef = db.collection('locks').doc(`daily_gen_${today}`);
+    // 5. Locking: Prevent concurrent AI calls (TE-07). The lock is held for the whole
+    //    generation and released in this handler's finally; releasing it here would
+    //    leave every expensive call that follows unguarded.
+    const lockDoc = db.collection('locks').doc(`daily_gen_${today}`);
+    lockRef = lockDoc;
     const isLocked = await db.runTransaction(async (tx) => {
-      const lockSnap = await tx.get(lockRef);
+      const lockSnap = await tx.get(lockDoc);
       if (lockSnap.exists && lockSnap.data()?.status === 'generating') {
         const startedAt = lockSnap.data()?.startedAt?.toDate();
-        if (startedAt && Date.now() - startedAt.getTime() < 5 * 60 * 1000) return true;
+        if (startedAt && Date.now() - startedAt.getTime() < LOCK_TTL_MS) return true;
+        // Stale lock - TTL expired, we can take over
       }
-      tx.set(lockRef, { status: 'generating', startedAt: new Date(), uid });
+      tx.set(lockDoc, {
+        status: 'generating',
+        startedAt: new Date(),
+        uid,
+        runId,
+        ttl: new Date(Date.now() + LOCK_TTL_MS),
+      });
+      lockOwned = true;
       return false;
     });
 
@@ -235,13 +370,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `[daily] Quality engine published ${stats.publishedCount}/${stats.candidates} (avg score: ${stats.avgPublishedScore}, failOpen: ${stats.failOpen})`
     );
 
+    // Intra-day diversity guard (TE-30): cap how many near-neighbour ideas from a
+    // tight similarity cluster publish in a single day, so the feed spans distinct
+    // problem spaces instead of echoing one hot concept.
+    const {
+      published: diversePublished,
+      rejected: diversityRejected,
+      stats: diversityStats,
+    } = await applyDiversityGuard(published, rejected, vectorsByHeadline);
+
+    // Signal citation verification (measure-first: unverified flagged, not dropped)
+    const verificationResults = verifySignalCitations(diversePublished, signalMetrics.signals);
+    console.log(
+      `[daily] Signal citation verification: ${verificationResults.filter((r) => r.signalVerified).length}/${verificationResults.length} ideas match signal snapshot`
+    );
+
+    // Add signalVerified flag to each published idea
+    const ideasWithVerification = diversePublished.map((idea, idx) => {
+      const result = verificationResults[idx];
+      const updates: any = {
+        ...idea,
+        signalVerified: result?.signalVerified || false,
+      };
+      if (result?.mismatchedSources && result.mismatchedSources.length > 0) {
+        updates.mismatchedSources = result.mismatchedSources;
+      }
+      return updates;
+    });
+
     const data = {
       intro:
         data1.intro ||
         data2.intro ||
         data3.intro ||
         "Today's high-signal ideas, curated from live market trends.",
-      ideas: published,
+      ideas: ideasWithVerification,
       disclaimer: cleanDailyDisclaimer(
         data1.disclaimer ||
           data2.disclaimer ||
@@ -274,6 +437,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           threshold,
         },
         gate: gate.stats,
+        citationVerifiedCount: verificationResults?.filter((r) => r.signalVerified).length || 0,
+        diversity: diversityStats,
       },
       date: today,
       generatedAt: new Date().toISOString(),
@@ -282,18 +447,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await docRef.set(finalData);
 
     // Persist published idea vectors for future semantic dedup (non-fatal)
-    await saveIdeaEmbeddings(today, published, vectorsByHeadline);
+    await saveIdeaEmbeddings(today, diversePublished, vectorsByHeadline);
 
     // Log publish-time score snapshots for prediction accuracy grading (non-fatal)
-    await savePredictions(today, published, version);
+    await savePredictions(today, diversePublished, version);
 
     // Save run snapshot in history for audits and logs. Rejected candidates are kept
     // here (headline + score + reason only) as training signal for the prompt optimizer.
-    const runTimestamp = new Date().toISOString();
-    const runId = `${today}_${runTimestamp.replace(/[:.]/g, '-')}`;
+    const historyRunId = `${today}_${new Date().toISOString().replace(/[:.]/g, '-')}`;
     await db
       .collection('daily_generations_history')
-      .doc(runId)
+      .doc(historyRunId)
       .set({
         ...finalData,
         rejectedCandidates: [
@@ -303,23 +467,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             reason: 'quality gate: ' + ((idea.qualityIssues || []).join(', ') || 'cut'),
           })),
           ...rejected,
+          ...diversityRejected.map((idea) => ({
+            headline: idea.headline,
+            qualityScore: idea.qualityScorePrecheck ?? null,
+            reason: 'diversity guard: cluster cap reached',
+          })),
         ],
-        generatedAt: runTimestamp,
+        generatedAt: new Date().toISOString(),
       });
-
-    await lockRef.delete();
 
     return res.json(finalData);
   } catch (err: any) {
     console.error('[daily] Generation error:', err);
-
-    // Attempt to unlock on failure
-    try {
-      const db = getAdminDb();
-      await db.collection('locks').doc(`daily_gen_${today}`).delete();
-    } catch (_lockErr) {
-      // Ignore unlock errors
-    }
 
     if (isProgrammingError(err)) {
       console.error(
@@ -331,5 +490,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res
       .status(503)
       .json({ error: 'AI generation temporarily unavailable. ' + (err?.message || '') });
+  } finally {
+    // Release the lock whatever happened, but only if this run still owns it (TE-07).
+    if (lockOwned && lockRef) {
+      try {
+        const current = await lockRef.get();
+        if (current.exists && current.data()?.runId === runId) {
+          await lockRef.delete();
+        }
+      } catch (_lockErr) {
+        // Ignore unlock errors - non-fatal
+      }
+    }
   }
 }

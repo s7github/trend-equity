@@ -288,9 +288,9 @@ Based on the competitive analysis in `trend-equity-brain/README.md`, the primary
 | TE-77 | Implement Tinder-like swipe interface for opportunity discovery (like/dislike/save, session tracking) | done (2026-10-27) | Claude | M      |
 | TE-78 | Convert from desktop-first to mobile-first design (touch gestures, responsive cards)                  | done (2026-10-27) | Claude | M      |
 | TE-79 | Add gamification system (streaks, achievements, social comparison, leaderboards)                      | done (2026-10-27) | Claude | S      |
-| TE-80 | Performance optimization (virtual scrolling, sub-2s loads, 60 FPS on mobile)                          | todo              | Claude | M      |
-| TE-81 | Progressive enhancement (details on save, time-boxed sessions, optional deep dive)                    | todo              | Claude | S      |
-| TE-82 | Add mobile-specific features (biometric auth, push notifications, offline support)                    | todo              | Claude | L      |
+| TE-80 | Performance optimization (virtual scrolling, sub-2s loads, 60 FPS on mobile)                          | done (2026-10-27) | Claude | M      |
+| TE-81 | Progressive enhancement (details on save, time-boxed sessions, optional deep dive)                    | done (2026-10-27) | Claude | S      |
+| TE-82 | Add mobile-specific features (biometric auth, push notifications, offline support)                    | in progress       | Claude | L      |
 | TE-83 | Implement analytics for engagement tracking (session duration, save rate, user journey)               | done (2026-10-27) | Claude | S      |
 | TE-84 | Create mobile-first responsive design system with touch-friendly interactions                         | done (2026-10-27) | Claude | M      |
 
@@ -302,9 +302,15 @@ Based on the competitive analysis in `trend-equity-brain/README.md`, the primary
 
 **TE-80 user story:** As a user on mobile data, I want opportunities to load instantly and swipe smoothly with 60 FPS, so I never abandon the app due to performance issues.
 
+**TE-80 as shipped (2026-10-27) — scope note.** The feed no longer mounts every card: `ProgressiveList` renders one page (5) and appends the next as a sentinel nears the viewport, so the initial render is bounded and scroll position stays with the browser. **Fixed-height virtualization was deliberately not shipped:** idea cards are variable-height (expandable analysis, toolkit, comments), so a `itemHeight`-row virtualizer clips or overlaps rows — the interrupted attempt did exactly that (fixed 320px rows, a `startIndex * itemHeight` offset applied twice, `height: 100%` inside a page-scroll layout, and a precedence bug that limited the window to ~5 rows). Also shipped: `IdeaCard` is memoised, and `useIdeas` was split into `useDailyFeed` / `useCustomFeed` / `useIdeaMutations` so feed state is not one 47-value object. Not measured on a real device — “sub-2s / 60 FPS” remains unverified, and full windowing for the 35-card builder feed is still open as follow-up.
+
 **TE-81 user story:** As a user, I want to dive deeper into opportunities I save while still being able to quickly scan through many options in a single session.
 
+**TE-81 as shipped (2026-10-27).** The swipe HUD now carries a time-boxed session timer (counts to a 5-minute focus target, colour flips when reached) inside the streak row rather than as a third stacked panel that covered the card; `Start New Session` restarts the deck and timer. Fixed on the way: the streak counted swipes and labelled them “days” (it now tracks consecutive days and survives a session reset), and the deck ended one card early so the last opportunity could never be swiped.
+
 **TE-82 user story:** As a mobile user, I want to receive push notifications about high-conviction opportunities matching my interests and to access key features even when offline.
+
+**TE-82 as shipped (2026-10-27) — partial, stays `in progress`.** Shipped: an offline app shell (`public/sw.js`, registered from `src/main.tsx` in production only) that caches the shell and hashed assets, never intercepts POSTs and never caches `/api/*` responses — those are per-user, and a shared disk cache would hand one visitor's feed to the next on the same device; navigations are network-first so a deploy is picked up on the next load. Also shipped: `@capacitor/push-notifications` wired into the native project (`capacitor.config.ts`, Android Gradle files, `src/services/mobileServices.ts`). **Not shipped:** anything that actually delivers a notification — there is no FCM sender, no token registration endpoint, and no UI opt-in, because promising alerts with no sender is worse than staying quiet. `authenticateBiometric()` is a WebAuthn stub with a placeholder challenge; it must not be wired until the server issues a real challenge. The pre-existing `public/sw.js` was replaced, not extended: it served `/` cache-first (pinning returning users to an old shell) and ran `cache.match()` on POST requests, which rejects — it would have broken every `/api/generate/*` call for anyone who had loaded the app.
 
 **TE-83 user story:** As the product owner, I want analytics showing how users actually discover and engage with opportunities, so I can optimize the experience based on real behavior.
 
@@ -345,7 +351,7 @@ Sequencing: TE-29 done — now measure the near-miss distribution to ground the 
 | ID    | Task                                                                                                                                                                              | Status            | Owner  | Effort |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------ | ------ |
 | TE-29 | Dedup observability: record per-run semantic-dup drop count + the 0.75–0.85 near-miss similarity distribution in `qualityStats`                                                   | done (2026-07-21) | Claude | S      |
-| TE-30 | Intra-day diversity guard: cap how many near-neighbour ideas (above a cluster threshold) publish in a single day; enforce category spread across the published set                | todo              | —      | M      |
+| TE-30 | Intra-day diversity guard: cap how many near-neighbour ideas (above a cluster threshold) publish in a single day; enforce category spread across the published set                | done (2026-10-27) | Claude | M      |
 | TE-31 | Right-size daily volume: reduce `PUBLISH_COUNT` (35) and/or raise overgeneration (`CANDIDATES_PER_BATCH`), so the model isn't forced to pad with reworded filler to hit the count | todo              | —      | S      |
 
 **TE-29 user story:** As the product owner, I want each generation run to log how many candidates were dropped as semantic duplicates and the distribution of near-misses (candidates scoring 0.75–0.85 vs the prior 30 days), so I can tune the threshold from evidence instead of intuition. Acceptance: `semanticDedupeCandidates` returns per-candidate max-similarity; `daily.ts` writes `qualityStats.dedup = { dropped, nearMissBuckets }`; visible in `daily_generations_history`. Mirrors the TE-04 signal-observability pattern.
@@ -356,13 +362,21 @@ Sequencing: TE-29 done — now measure the near-miss distribution to ground the 
 
 ## Next — P1: protect the "grounded in live signals" differentiator
 
-| ID    | Task                                                                                                                              | Status | Owner | Effort |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------- | ------ | ----- | ------ |
-| TE-05 | Signal citation verification: match `trendSources` against the signal snapshot, `signalVerified` flag (measure-first, don't drop) | todo   | —     | M      |
-| TE-06 | Resilient signal fetching: Reddit RSS fallback, Firestore-shared 1 h cache, real failure logging                                  | todo   | —     | M      |
-| TE-07 | Generation lock hardening: 10-min TTL, runId ownership check, unlock in `finally`                                                 | todo   | —     | S      |
+| ID    | Task                                                                                                                              | Status            | Owner  | Effort |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------ | ------ |
+| TE-05 | Signal citation verification: match `trendSources` against the signal snapshot, `signalVerified` flag (measure-first, don't drop) | done (2026-10-27) | Claude | M      |
+| TE-06 | Resilient signal fetching: Reddit RSS fallback, Firestore-shared 1 h cache, real failure logging                                  | done (2026-10-27) | Claude | M      |
+| TE-07 | Generation lock hardening: 10-min TTL, runId ownership check, unlock in `finally`                                                 | done (2026-10-27) | Claude | S      |
 
 **TE-05 user story:** As a user evaluating an idea, I want its cited trend sources to provably match signals that existed at generation time, so grounding is verifiable, not model self-assertion.
+
+**TE-05/06/07/30 as shipped (2026-10-27) — review notes.** Three defects were found and fixed while finishing these; all three had shipped green in unit tests.
+
+1. **The lock protected nothing.** `finally { if (lockOwned) lockRef.delete() }` was attached to the _transaction_ `try`, so the lock was deleted immediately after being taken — every expensive call that followed (prompt optimisation, signal fetch, three AI batches, critic, embeddings) ran unguarded. Release now sits in the handler's own `finally`, keyed on `runId`, and the catch no longer deletes another run's lock.
+2. **TE-05 could never verify anything.** It compared `idea.trendSources` against `signalSnapshot.sources`, a field that does not exist on `getMarketSignals()` — every idea came back `signalVerified: false`. Even with the right field it was wrong in kind: `trendSources` are platform citations ("Hacker News", "r/SaaS"), not headline strings. Verification now maps each citation to one of the five signal buckets and requires that bucket to have returned data that day; unknown platforms are mismatches. The flag finally has a reader: a "Sources checked" chip on the idea card, rendered only when the flag is true.
+3. **`PUBLISH_COUNT` had been cut 35 → 30 with no ticket and no data.** Restored to 35; revisiting it is TE-31 and needs the TE-29 near-miss data.
+
+Tests: `tests/unit/lib/signals.test.ts` now mocks the Firestore-backed cache (unmocked it hung for 5s per case), queues the Reddit RSS fallback response, and `radar.test.ts` asserts the radar cache write by key instead of a global call count, because the shared signal cache writes too.
 
 **TE-06 user story:** As the product owner, I want signal fetching to survive Reddit's datacenter-IP blocking and share one cache across instances, so production generations are consistently grounded.
 
