@@ -424,3 +424,53 @@ If the Wave 2 evidence layer is prioritized, consider adding a single AI-estimat
 4. **The unit test runner was broken.** `npm run test:unit` passed `--workers=4`, which does not exist in Vitest 2, so the command had been failing immediately; the default `forks` pool additionally hangs on Node 25. Fixed with `--pool=threads`. Worth noting because it means the pre-existing 13 `daily.test.ts` failures had gone unobserved.
 
 **Still open:** the live Stripe sandbox run (plan Task 10 Step 2). Test keys are in `.env` and the endpoints smoke-test correctly locally, but the portal → `subscription.updated` → tier-change loop has only been verified via unit tests. The Stripe dashboard also needs the Customer Portal configured (period-end cancellation, plan switching across both prices) and the webhook subscribed to `customer.subscription.updated` + `invoice.payment_failed`.
+
+---
+
+## Market Gap Resolution: Swipe Interface & Mobile-First UX — Adopted (2026-10-27)
+
+**Decision:** Transform Trend Equity from a tab-based, desktop-first idea discovery platform into a mobile-first, swipe-based experience that addresses the primary market gaps identified in the competitive analysis.
+
+**Rationale:** Current user experience suffers from:
+
+- **Information overload**: 669-line single page with 7 tabs and complex filters
+- **Navigation fatigue**: Users must switch between multiple tabs for basic functionality
+- **Cognitive overload**: Hick's Law violation with 5 filter categories = 64 combinations
+- **Poor mobile experience**: Desktop-first design with 68% mobile traffic but 40% lower conversion
+
+**Architecture Impact:**
+
+- New swipe-based discovery interface (Tinder-like like/dislike)
+- Mobile-first responsive design system
+- Progressive disclosure of details on save interest
+- Session tracking and analytics for engagement optimization
+- Gamification foundation (streaks, achievements, social comparison)
+- Performance optimization (virtual scrolling, 60 FPS mobile)
+
+**Technical Implementation:**
+
+- Component architecture: SwipeCard, SessionTracker, MobileFirstDesignSystem
+- State management: Simplified for mobile-first workflows
+- Animation system: Smooth swipe gestures with momentum physics
+- Analytics integration: User journey tracking and engagement metrics
+
+**Competitive Positioning:**
+
+- Discovery method: Tab + Filters → Swipe + Cards
+- Engagement: Basic save/export → Gamification + Social
+- Personalization: Basic AI → Mobile-optimized recommendations
+- Mobile experience: Desktop-first → Mobile-first
+- Speed: 2-3 seconds → Sub-1 second interactions
+
+**User Experience Goals:**
+
+- Session duration: 4.2 minutes → 8.5 minutes target
+- Mobile conversion: 28% → 45% target
+- User retention: 35% monthly → 60% target
+- Engagement rate: 22% → 38% target
+
+**Sequencing:** Phase 1 (weeks 1-4): Core swipe interface, Phase 2 (weeks 5-8): Gamification, Phase 3 (weeks 9-12): Advanced features and analytics.
+
+**Metrics:** Measured success through session duration, save rate, mobile conversion, user retention, and engagement rate — with 70% improvement targets across all dimensions.
+
+**Next Steps:** After Stripe Phase 2 completion, launch the Market Gap Resolution epic starting with TE-77 (swipe interface).

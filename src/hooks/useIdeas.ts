@@ -138,7 +138,24 @@ export function useIdeas(user: User | null, tier: Tier, authReady: boolean, isAd
       setCachedFeed(newGen);
     } catch (err: any) {
       console.error('Generation Error:', err);
-      setError(err?.message || 'AI generation failed. Please refresh to try again.');
+      const msg = err?.message || '';
+
+      // "Sign in to load today's feed" is expected when unauthenticated.
+      // Calculate time until next generation instead of showing an error.
+      if (msg.includes('Sign in')) {
+        setDailyGen(null);
+        const genTime = parseDailyGenerationTime(import.meta.env.VITE_DAILY_GENERATION_TIME);
+        const timeRemaining = getTimeUntilNextGeneration(genTime.hours, genTime.minutes);
+        setTimeUntilGeneration(timeRemaining);
+      } else if (msg.includes('permission-denied') || msg.includes('permissions')) {
+        setError('Access denied. Please ensure you are signed in.');
+      } else if (msg.includes('Quota exceeded')) {
+        setError('Daily quota reached. Please try again tomorrow.');
+      } else if (msg.includes('offline')) {
+        setError('You appear to be offline.');
+      } else {
+        setError(msg || 'AI generation failed. Please refresh to try again.');
+      }
     } finally {
       setGenerating(false);
     }

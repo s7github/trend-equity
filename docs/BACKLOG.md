@@ -279,6 +279,37 @@ Context: dedup already exists in two layers — a prompt "DO NOT REPEAT" block o
 
 **TE-28 user story:** As a user, I want an idea that is the _same concept reworded_ to be caught and dropped, so the feed stops feeling repetitive. Acceptance: default threshold in `getDedupeThreshold()` is 0.80 (still env-overridable via `DEDUP_SIM_THRESHOLD`); `embedText()` in [`embeddings.ts`](../api/_lib/embeddings.ts) concatenates headline, pitch, target market and business model; `.env.example` default updated; unit tests in `tests/unit/lib/embeddings.test.ts` cover the richer text + new default. Ship together with TE-29 so the 0.80 choice is validated by measured drop rates, not guessed.
 
+## Now — P0.6: Market Gap Resolution - Swipe Interface & Mobile UX (4 weeks)
+
+Based on the competitive analysis in `trend-equity-brain/README.md`, the primary market gaps are resolved through these tasks:
+
+| ID    | Task                                                                                                  | Status | Owner  | Effort |
+| ----- | ----------------------------------------------------------------------------------------------------- | ------ | ------ | ------ |
+| TE-77 | Implement Tinder-like swipe interface for opportunity discovery (like/dislike/save, session tracking) | todo   | Claude | M      |
+| TE-78 | Convert from desktop-first to mobile-first design (touch gestures, responsive cards)                  | todo   | Claude | M      |
+| TE-79 | Add gamification system (streaks, achievements, social comparison, leaderboards)                      | todo   | Claude | S      |
+| TE-80 | Performance optimization (virtual scrolling, sub-2s loads, 60 FPS on mobile)                          | todo   | Claude | M      |
+| TE-81 | Progressive enhancement (details on save, time-boxed sessions, optional deep dive)                    | todo   | Claude | S      |
+| TE-82 | Add mobile-specific features (biometric auth, push notifications, offline support)                    | todo   | Claude | L      |
+| TE-83 | Implement analytics for engagement tracking (session duration, save rate, user journey)               | todo   | Claude | S      |
+| TE-84 | Create mobile-first responsive design system with touch-friendly interactions                         | todo   | Claude | M      |
+
+**TE-77 user story:** As a user exploring startup opportunities, I want to swipe through ideas quickly (like/dislike) so I can find my next high-convidence opportunity without scrolling through 35 cards at once.
+
+**TE-78 user story:** As a mobile user, I want touch-optimized cards and swipe gestures for rapid opportunity scanning on my phone, not a desktop experience adapted for smaller screens.
+
+**TE-79 user story:** As a user, I want to track my discovery streaks and unlock achievements as I explore more opportunities, so I'm motivated to build long-term engagement with the platform.
+
+**TE-80 user story:** As a user on mobile data, I want opportunities to load instantly and swipe smoothly with 60 FPS, so I never abandon the app due to performance issues.
+
+**TE-81 user story:** As a user, I want to dive deeper into opportunities I save while still being able to quickly scan through many options in a single session.
+
+**TE-82 user story:** As a mobile user, I want to receive push notifications about high-conviction opportunities matching my interests and to access key features even when offline.
+
+**TE-83 user story:** As the product owner, I want analytics showing how users actually discover and engage with opportunities, so I can optimize the experience based on real behavior.
+
+**TE-84 user story:** As a designer, I want a comprehensive mobile-first design system that works consistently across all device sizes and touch input methods.
+
 ## Now — P1.5: Agent & Generation Pipeline Performance (50% velocity uplift)
 
 Full implementation plan: [2026-07-21 agent performance optimization](superpowers/plans/2026-07-21-agent-performance-optimization.md).

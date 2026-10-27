@@ -66,6 +66,11 @@ probe_models_final.ts
 verify-ai.ts
 test_json_parse.ts
 
+# Development tools and temporary files
+tmp/
+probe_models*.ts
+probe_models*.js
+
 # Claude / AI settings (CLAUDE.md is intentionally tracked — it is the canonical shared agent guide)
 # Note: these must exclude directory *contents* (`dir/*`), not the directory
 # itself (`dir/`) — git will not descend into an excluded directory, so a `!`
