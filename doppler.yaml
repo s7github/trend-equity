@@ -1,0 +1,3 @@
+setup:
+  project: trend-equity
+  config: dev

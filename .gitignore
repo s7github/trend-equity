@@ -44,7 +44,6 @@ node_modules
 out
 dist
 *.vsix
-.claude
 .git
 *.tmp
 __pycache__
@@ -68,5 +67,13 @@ verify-ai.ts
 test_json_parse.ts
 
 # Claude / AI settings (CLAUDE.md is intentionally tracked — it is the canonical shared agent guide)
-.claude/
-.serena/
+# Note: these must exclude directory *contents* (`dir/*`), not the directory
+# itself (`dir/`) — git will not descend into an excluded directory, so a `!`
+# negation below it never takes effect.
+.claude/*
+# Shared, non-secret agent config every developer should get. Machine-local
+# overrides stay in .claude/settings.local.json, which remains ignored.
+!.claude/settings.json
+# .serena/ is governed by its own .serena/.gitignore, which already excludes the
+# LSP cache and project.local.yml while tracking project.yml — so a new developer
+# gets the language/LSP config without running `serena project generate-yml`.

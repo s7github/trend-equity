@@ -301,8 +301,7 @@ export function getPeriodEnd(subscription: Stripe.Subscription): number | null {
   if (typeof legacy === 'number') return legacy;
 
   const itemEnd = subscription.items?.data?.[0] as unknown as
-    | { current_period_end?: number }
-    | undefined;
+    { current_period_end?: number } | undefined;
   return typeof itemEnd?.current_period_end === 'number' ? itemEnd.current_period_end : null;
 }
 

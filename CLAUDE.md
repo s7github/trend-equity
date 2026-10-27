@@ -182,6 +182,8 @@ A passing correctness guard is not a completed journey. `void openPortal()` sati
 - **Minimal Verbiage**: No filler, no repeating instructions. Start directly with the plan, diff, or answer.
 - **Edits Format**: Provide changes as precise Search & Replace blocks with sufficient unique context. Never rewrite entire files unless explicitly requested.
 - **Lazy Loading**: Only read files when strictly necessary.
+- **Symbol-First Reading**: Serena (MCP, TypeScript LSP) is configured for this repo — its tools are deferred, so fetch them with `ToolSearch` (`select:mcp__serena__find_symbol,...`) before first use. Before a whole-file `Read` of any `.ts`/`.tsx` over ~150 lines, call `mcp__serena__get_symbols_overview` to orient, then `mcp__serena__find_symbol(include_body=true)` for the one symbol you need. `api/_lib/stripe.ts` is ~3.5k tokens read whole vs ~120 for its overview. Whole-file `Read` is still correct for short files, docs (`BACKLOG.md`, `CHANGELOG.md`, `DECISIONS.md`), config, and when you genuinely need the entire file.
+- **Reference-Finding over Grep**: Use `mcp__serena__find_referencing_symbols` for the Change Impact "every value gets a writer _and_ a reader" check (§2.2) — the LSP resolves actual references, where `Grep` misses renamed bindings and re-exports. The three defects cited in §2.2 (`checkIpRateLimit`, `checkoutTier`, `portalBusy`) were all missing-reader bugs of exactly this shape. `Grep` remains right for non-symbol text: strings, config keys, comments, Firestore field names.
 - **Local-First**: Always prefer existing codebase symbols and patterns. Do not hallucinate local APIs.
 
 ### 4. Tool & Environment Rules
@@ -211,3 +213,5 @@ A passing correctness guard is not a completed journey. `void openPortal()` sati
 - **State Management**: Prioritize local component state. Use global state only when data must be shared across non-adjacent tree branches.
 - **Refactoring**: Suggest cleanups when code is messy, but do not refactor unrelated areas without explicit approval.
 - **Success Criteria**: Before marking a task complete, verify via logs, tests, and browser where applicable.
+
+@AGENTS.md
