@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "environments": {
+    "local": {
+      "launchers": [
+        {
+          "name": "Dev",
+          "command": "npm run dev",
+          "port": 3000,
+          "url": "http://localhost:{port}"
+        },
+        {
+          "name": "Dev:client",
+          "command": "npm run dev:client",
+          "port": 3000,
+          "url": "http://localhost:{port}"
+        },
+        {
+          "name": "Dev:live",
+          "command": "npm run dev:live",
+          "port": 3000,
+          "url": "http://localhost:{port}"
+        },
+        {
+          "name": "Dev:mock",
+          "command": "npm run dev:mock",
+          "port": 3000,
+          "url": "http://localhost:{port}"
+        },
+        {
+          "name": "Dev:server",
+          "command": "npm run dev:server"
+        },
+        {
+          "name": "Preview",
+          "command": "npm run preview",
+          "port": 4173,
+          "url": "http://localhost:{port}"
+        }
+      ]
+    }
+  }
+}
